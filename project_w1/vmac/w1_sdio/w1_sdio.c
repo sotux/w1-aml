@@ -293,8 +293,22 @@ static int aml_w1_sdio_bottom_read(unsigned char func_num, int addr, void *buf, 
     }
     {
         unsigned char fw_st = aml_w1_sdio_bottom_read8(SDIO_FUNC1, 0x23c) & 0xF;
-        if (fw_st != 6)
-            pr_err("%s:%d, BUG! fw_st %x, func_num %x, addr %x \n", __func__, __LINE__, fw_st, func_num, addr);
+        /*
+         * fw_st == 0xF: the PMU status register read back all ones, i.e. the
+         * W1 chip has no power / does not answer at all.  The original code
+         * only printed a warning and issued the transfer anyway, so on a
+         * powered-off chip every access turned into a CMD52/CMD53 timeout
+         * (-110) and the driver kept hammering the bus and the kernel log.
+         * A transfer can only fail in that state, so fail fast instead.
+         */
+        if (fw_st == 0xF) {
+            w1_aml_wifi_sdio_power_unlock();
+            ERROR_DEBUG_OUT("aml_w1_sdio_bottom_read, W1 chip not responding (fw_st 0x%x), func_num %x, addr %x\n",
+                            fw_st, func_num, addr);
+            return -1;
+        } else if (fw_st != 6) {
+            pr_err_ratelimited("%s:%d, BUG! fw_st %x, func_num %x, addr %x \n", __func__, __LINE__, fw_st, func_num, addr);
+        }
     }
     AML_W1_BT_WIFI_MUTEX_ON();
 
@@ -395,8 +409,22 @@ static int aml_w1_sdio_bottom_write(unsigned char func_num, int addr, void *buf,
 
     {
         unsigned char fw_st = aml_w1_sdio_bottom_read8(SDIO_FUNC1, 0x23c) & 0xF;
-        if (fw_st != 6)
-            pr_err("%s:%d, BUG! fw_st %x, func_num %x, addr %x \n", __func__, __LINE__, fw_st, func_num, addr);
+        /*
+         * fw_st == 0xF: the PMU status register read back all ones, i.e. the
+         * W1 chip has no power / does not answer at all.  The original code
+         * only printed a warning and issued the transfer anyway, so on a
+         * powered-off chip every access turned into a CMD52/CMD53 timeout
+         * (-110) and the driver kept hammering the bus and the kernel log.
+         * A transfer can only fail in that state, so fail fast instead.
+         */
+        if (fw_st == 0xF) {
+            w1_aml_wifi_sdio_power_unlock();
+            ERROR_DEBUG_OUT("aml_w1_sdio_bottom_write, W1 chip not responding (fw_st 0x%x), func_num %x, addr %x\n",
+                            fw_st, func_num, addr);
+            return -1;
+        } else if (fw_st != 6) {
+            pr_err_ratelimited("%s:%d, BUG! fw_st %x, func_num %x, addr %x \n", __func__, __LINE__, fw_st, func_num, addr);
+        }
     }
 
     AML_W1_BT_WIFI_MUTEX_ON();

@@ -1339,6 +1339,7 @@ static void config_pmu_reg(bool is_power_on)
 
     unsigned char host_req_status;
     unsigned char wifi_pmu_status;
+    unsigned int wifi_pmu_retry = 0;
     RG_AON_A30_FIELD_T reg_aon30_data;
     RG_AON_A29_FIELD_T reg_aon29_data;
     RG_BG_A16_FIELD_T reg_bg16_data;
@@ -1413,8 +1414,29 @@ static void config_pmu_reg(bool is_power_on)
         wifi_pmu_status = halpriv->hal_ops.hal_get_fw_ps_status();
         pr_debug("%s wifi_pmu_status:0x%x\n", __func__, wifi_pmu_status);
 
+        /*
+         * This was an endless poll loop: once the W1 chip has no power the
+         * status register reads back as 0xff (0xF below) forever, so the
+         * driver spun here for good, printing one line per iteration and
+         * hammering the SDIO bus with CMD52 timeouts - which is what flooded
+         * the kernel log and wedged the shutdown path (device_shutdown() ->
+         * aml_sdio_shutdown() -> config_pmu_reg_off()).
+         * Terminate immediately when the chip does not answer at all, and
+         * after a bounded number of retries in the normal transition case.
+         */
         while ((wifi_pmu_status & 0xF) != PMU_ACT_MODE) {
+            if ((wifi_pmu_status & 0xF) == 0xF) {
+                pr_err("%s: W1 chip not responding (wifi_pmu_status:0x%x), aborting power up\n",
+                       __func__, wifi_pmu_status);
+                return;
+            }
+            if (wifi_pmu_retry++ >= 100) {
+                pr_err("%s: PMU did not reach ACT mode (wifi_pmu_status:0x%x) after %u retries\n",
+                       __func__, wifi_pmu_status, wifi_pmu_retry);
+                return;
+            }
             pr_debug("%s wifi_pmu_status:0x%x\n", __func__, wifi_pmu_status);
+            msleep(10);
             wifi_pmu_status = halpriv->hal_ops.hal_get_fw_ps_status();
         }
 
@@ -1437,7 +1459,7 @@ static void config_pmu_reg(bool is_power_on)
         value_pmu_A24 = hif->hif_ops.hi_read_word(RG_PMU_A24);
         value_aon30 = hif->hif_ops.hi_read_word(RG_AON_A30);
         pr_debug("%s power off: before write A12=0x%x, A15=0x%x, A17=0x%x, A18=0x%x, A20=0x%x, A22=0x%x, A24=0x%x, AON30=0x%x\n",
-            __func__, value_pmu_A12,value_pmu_A15,value_pmu_A17,value_pmu_A18,value_pmu_A20,value_pmu_A22,value_pmu_A24, value_aon30);
+            __func__, value_pmu_A12,value_pmu_A15,value_pmu_A17,value_pmu_A18,value_pmu_A20,value_pmu_A22, value_pmu_A24, value_aon30);
 
         // switch rf dig to dvdd09_ao
         reg_bg16_data.data = hif->hif_ops.hi_read_word(RG_BG_A16);
